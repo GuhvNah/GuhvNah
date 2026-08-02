@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  ESTIMATOR
+  VIEWER
+}
+
+enum ProjectStatus {
+  LEAD
+  TAKEOFF_IN_PROGRESS
+  QUOTED
+  WON
+  LOST
+  ARCHIVED
+}
+
+enum MeasurementType {
+  LINEAR
+  AREA
+  COUNT
+}
+
+// A tenant / construction company using the app.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  // Default state/region for jobs, defaults to WA (Perth).
+  state     String   @default("WA")
+  gstRate   Decimal  @default(0.10) @db.Decimal(5, 4)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  clients     Client[]
+  projects    Project[]
+  costItems   CostItem[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String?
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+}
+
+// Join table between User and Organization, carrying the user's role.
+model Membership {
+  id             String   @id @default(cuid())
+  role           Role     @default(ESTIMATOR)
+  createdAt      DateTime @default(now())
+  userId         String
+  organizationId String
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Client {
+  id             String   @id @default(cuid())
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projects     Project[]
+
+  @@index([organizationId])
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  name           String
+  siteAddress    String?
+  suburb         String?
+  postcode       String?
+  status         ProjectStatus @default(LEAD)
+  description    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organizationId String
+  clientId       String?
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client       Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  documents    TakeoffDocument[]
+
+  @@index([organizationId])
+  @@index([clientId])
+}
+
+// An uploaded plan (PDF) for a project.
+model TakeoffDocument {
+  id           String   @id @default(cuid())
+  name         String
+  fileUrl      String
+  pageCount    Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  projectId    String
+
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  measurements TakeoffMeasurement[]
+
+  @@index([projectId])
+}
+
+// A single measurement (linear run, area, or count marker) drawn on a document page.
+model TakeoffMeasurement {
+  id         String          @id @default(cuid())
+  label      String
+  type       MeasurementType
+  page       Int             @default(1)
+  // Raw canvas points, JSON-encoded: [{x,y}, ...] in PDF page coordinates.
+  points     Json
+  // Real-world scale at time of drawing: units drawn per real-world metre.
+  pixelsPerMetre Decimal     @db.Decimal(12, 4)
+  // Computed real-world quantity: metres for LINEAR, square metres for AREA, tally for COUNT.
+  quantity   Decimal         @db.Decimal(12, 4)
+  unit       String
+  color      String          @default("#2563eb")
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  documentId String
+
+  document TakeoffDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+// Org-level library of priced material/labour items used to cost out quantities.
+model CostItem {
+  id             String   @id @default(cuid())
+  name           String
+  unit           String
+  unitRate       Decimal  @db.Decimal(12, 2)
+  category       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organizationId String
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
